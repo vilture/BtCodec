@@ -24,6 +24,13 @@ class BTBroadcast private constructor(callback: Callback) : BroadcastReceiver() 
         if (intent.action == BluetoothDevice.ACTION_ACL_DISCONNECTED) {
             onBluetoothDisconnected()
         }
+        if (intent.action == BluetoothAdapter.ACTION_STATE_CHANGED) {
+            onBluetoothState()
+        }
+    }
+
+    private fun onBluetoothState() {
+        btCallback?.onBluetoothState()
     }
 
 
@@ -39,6 +46,7 @@ class BTBroadcast private constructor(callback: Callback) : BroadcastReceiver() 
     interface Callback {
         fun onBluetoothConnected()
         fun onBluetoothDisconnected()
+        fun onBluetoothState()
     }
 
 

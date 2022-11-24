@@ -2,6 +2,7 @@ package ru.vilture.btcodec
 
 import android.Manifest
 import android.annotation.SuppressLint
+import android.app.Activity
 import android.app.ActivityManager
 import android.bluetooth.*
 import android.bluetooth.BluetoothCodecConfig.*
@@ -19,7 +20,6 @@ import android.provider.Settings
 import android.util.Log
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.annotation.Nullable
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
@@ -28,11 +28,9 @@ import kotlinx.coroutines.*
 import ru.vilture.btcodec.databinding.ActivityMainBinding
 import java.util.*
 
-
+@SuppressLint("NewApi")
 @OptIn(DelicateCoroutinesApi::class)
 class MainActivity : AppCompatActivity(), BTBroadcast.Callback {
-
-
     private lateinit var binding: ActivityMainBinding
 
     var a2dpService: BluetoothA2dp? = null
@@ -59,21 +57,70 @@ class MainActivity : AppCompatActivity(), BTBroadcast.Callback {
         }
     }
 
+    @SuppressLint("MissingPermission")
+    var btaresult =
+        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+            val context = this
+            if (result.resultCode == Activity.RESULT_OK) {
+                GlobalScope.launch(Dispatchers.Default) {
+                    delay(2000)
+                    getProfile(context)
+
+                    launch(Dispatchers.Main) {
+                        Toast.makeText(this@MainActivity, "Bluetooth включен", Toast.LENGTH_SHORT)
+                            .show()
+
+                        if (a2dpService!!.activeDevice != null) {
+
+                            getSaveCodec(this@MainActivity)
+                            if (codec == "")
+                                codec = getCCodec(
+                                    a2dpService!!.getCodecStatus(a2dpService!!.activeDevice).codecConfig.toString()
+                                )
+
+                            if (device == "") device = a2dpService!!.activeDevice.name
+
+                            binding.power.text = "BT ON"
+                            binding.power.backgroundTintList = ColorStateList.valueOf(Color.BLUE)
+
+                            binding.sbc.isEnabled = true
+                            binding.aac.isEnabled = true
+                            binding.lhdc.isEnabled = true
+                            binding.device.text = "$device ( $codec )"
+                        }
+                    }
+                }
+            } else if (result.resultCode == RESULT_CANCELED) {
+                Toast.makeText(
+                    this@MainActivity, "Работа Bluetooth отменена", Toast.LENGTH_SHORT
+                ).show()
+            }
+        }
+
+    private var requestBluetooth =
+        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+            if (result.resultCode == RESULT_OK) {
+                //granted
+            } else {
+                initA2DP()
+            }
+        }
+
+    private val requestMultiplePermissions =
+        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { permissions ->
+            permissions.entries.forEach {
+
+            }
+        }
+
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
-        val intent = Intent()
-        val packageName = packageName
-        val pm = getSystemService(POWER_SERVICE) as PowerManager
-        if (!pm.isIgnoringBatteryOptimizations(packageName)) {
-            intent.action = Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS
-            intent.data = Uri.parse("package:$packageName")
-            startActivity(intent)
-        }
-
+        batteryOpt()
 
         binding.power.text = "BT OFF"
         binding.power.backgroundTintList = ColorStateList.valueOf(Color.GRAY)
@@ -114,9 +161,11 @@ class MainActivity : AppCompatActivity(), BTBroadcast.Callback {
             }
 
             if (!bluetoothAdapter?.isEnabled!!) {
+//                val blueToothIntent = Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE)
+//                startActivityForResult(blueToothIntent, BLUETOOTH_REQ_CODE)
 
-                val blueToothIntent = Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE)
-                startActivityForResult(blueToothIntent, BLUETOOTH_REQ_CODE)
+                val btaintent = Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE)
+                btaresult.launch(btaintent)
 
                 bindingBTA(this)
             } else {
@@ -141,7 +190,6 @@ class MainActivity : AppCompatActivity(), BTBroadcast.Callback {
         binding.sbc.setOnClickListener {
             val deviceID: BluetoothDevice = a2dpService!!.activeDevice
             val status: BluetoothCodecStatus = a2dpService!!.getCodecStatus(deviceID)
-            val config = status.codecConfig
             val newConfig = BluetoothCodecConfig(
                 0,
                 1000 * 1000,
@@ -166,7 +214,6 @@ class MainActivity : AppCompatActivity(), BTBroadcast.Callback {
         binding.aac.setOnClickListener {
             val deviceID: BluetoothDevice = a2dpService!!.activeDevice
             val status: BluetoothCodecStatus = a2dpService!!.getCodecStatus(deviceID)
-            val config = status.codecConfig
             val newConfig = BluetoothCodecConfig(
                 1,
                 1000 * 1000,
@@ -191,7 +238,6 @@ class MainActivity : AppCompatActivity(), BTBroadcast.Callback {
         binding.lhdc.setOnClickListener {
             val deviceID: BluetoothDevice = a2dpService!!.activeDevice
             val status: BluetoothCodecStatus = a2dpService!!.getCodecStatus(deviceID)
-            val config = status.codecConfig
             val newConfig = BluetoothCodecConfig(
                 9,
                 1000 * 1000,
@@ -203,6 +249,7 @@ class MainActivity : AppCompatActivity(), BTBroadcast.Callback {
                 0,
                 0
             )
+
 
             savePrefValue("MyCodec", newConfig.codecType)
             a2dpService!!.setCodecConfigPreference(deviceID, newConfig)
@@ -216,6 +263,18 @@ class MainActivity : AppCompatActivity(), BTBroadcast.Callback {
 
     }
 
+    @SuppressLint("BatteryLife")
+    private fun batteryOpt() {
+        val intent = Intent()
+        val packageName = packageName
+        val pm = getSystemService(POWER_SERVICE) as PowerManager
+        if (!pm.isIgnoringBatteryOptimizations(packageName)) {
+            intent.action = Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS
+            intent.data = Uri.parse("package:$packageName")
+            startActivity(intent)
+        }
+    }
+
     private fun isServiceRunning(serviceClass: Class<*>): Boolean {
         val activityManager = getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
 
@@ -226,23 +285,6 @@ class MainActivity : AppCompatActivity(), BTBroadcast.Callback {
         }
         return false
     }
-
-
-    private var requestBluetooth =
-        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-            if (result.resultCode == RESULT_OK) {
-                //granted
-            } else {
-                initA2DP()
-            }
-        }
-
-    private val requestMultiplePermissions =
-        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { permissions ->
-            permissions.entries.forEach {
-
-            }
-        }
 
 
     private fun initA2DP(): MutableList<BluetoothDevice>? {
@@ -396,47 +438,47 @@ class MainActivity : AppCompatActivity(), BTBroadcast.Callback {
         }
     }
 
-    @SuppressLint("MissingPermission")
-    @Suppress("DEPRECATION")
-    override fun onActivityResult(requestCode: Int, resultCode: Int, @Nullable data: Intent?) {
-        super.onActivityResult(requestCode, resultCode, data)
-        val context = this
-
-        if (resultCode == RESULT_OK) {
-            GlobalScope.launch(Dispatchers.Default) {
-                delay(2000)
-                getProfile(context)
-
-                launch(Dispatchers.Main) {
-                    Toast.makeText(this@MainActivity, "Bluetooth включен", Toast.LENGTH_SHORT)
-                        .show()
-
-                    if (a2dpService!!.activeDevice != null) {
-
-                        getSaveCodec(this@MainActivity)
-                        if (codec == "")
-                            codec = getCCodec(
-                                a2dpService!!.getCodecStatus(a2dpService!!.activeDevice).codecConfig.toString()
-                            )
-
-                        if (device == "") device = a2dpService!!.activeDevice.name
-
-                        binding.power.text = "BT ON"
-                        binding.power.backgroundTintList = ColorStateList.valueOf(Color.BLUE)
-
-                        binding.sbc.isEnabled = true
-                        binding.aac.isEnabled = true
-                        binding.lhdc.isEnabled = true
-                        binding.device.text = "$device ( $codec )"
-                    }
-                }
-            }
-        } else if (resultCode == RESULT_CANCELED) {
-            Toast.makeText(
-                this@MainActivity, "Работа Bluetooth отменена", Toast.LENGTH_SHORT
-            ).show()
-        }
-    }
+//    @Deprecated("Deprecated in Java")
+//    @SuppressLint("MissingPermission")
+//    override fun onActivityResult(requestCode: Int, resultCode: Int, @Nullable data: Intent?) {
+//        super.onActivityResult(requestCode, resultCode, data)
+//        val context = this
+//
+//        if (resultCode == RESULT_OK) {
+//            GlobalScope.launch(Dispatchers.Default) {
+//                delay(2000)
+//                getProfile(context)
+//
+//                launch(Dispatchers.Main) {
+//                    Toast.makeText(this@MainActivity, "Bluetooth включен", Toast.LENGTH_SHORT)
+//                        .show()
+//
+//                    if (a2dpService!!.activeDevice != null) {
+//
+//                        getSaveCodec(this@MainActivity)
+//                        if (codec == "")
+//                            codec = getCCodec(
+//                                a2dpService!!.getCodecStatus(a2dpService!!.activeDevice).codecConfig.toString()
+//                            )
+//
+//                        if (device == "") device = a2dpService!!.activeDevice.name
+//
+//                        binding.power.text = "BT ON"
+//                        binding.power.backgroundTintList = ColorStateList.valueOf(Color.BLUE)
+//
+//                        binding.sbc.isEnabled = true
+//                        binding.aac.isEnabled = true
+//                        binding.lhdc.isEnabled = true
+//                        binding.device.text = "$device ( $codec )"
+//                    }
+//                }
+//            }
+//        } else if (resultCode == RESULT_CANCELED) {
+//            Toast.makeText(
+//                this@MainActivity, "Работа Bluetooth отменена", Toast.LENGTH_SHORT
+//            ).show()
+//        }
+//    }
 
     @SuppressLint("MissingPermission")
     override fun onBluetoothConnected() {
@@ -475,6 +517,39 @@ class MainActivity : AppCompatActivity(), BTBroadcast.Callback {
         device = ""
 
         Toast.makeText(this, "Отключено", Toast.LENGTH_SHORT).show()
+    }
+
+    @SuppressLint("MissingPermission")
+    override fun onBluetoothState() {
+        if (!bluetoothAdapter!!.isEnabled) {
+            binding.power.text = "BT OFF"
+            binding.power.backgroundTintList = ColorStateList.valueOf(Color.GRAY)
+
+            binding.sbc.isEnabled = false
+            binding.aac.isEnabled = false
+            binding.lhdc.isEnabled = false
+            binding.device.text = "Нет устройств"
+            device = ""
+        } else {
+            if (a2dpService!!.activeDevice != null) {
+
+                getSaveCodec(this)
+
+                if (codec == "")
+                    codec = getCCodec(
+                        a2dpService!!.getCodecStatus(a2dpService!!.activeDevice).codecConfig.toString()
+                    )
+            }
+
+            binding.power.text = "BT ON"
+            binding.power.backgroundTintList = ColorStateList.valueOf(Color.BLUE)
+
+            binding.sbc.isEnabled = true
+            binding.aac.isEnabled = true
+            binding.lhdc.isEnabled = true
+
+            binding.device.text = "$device ( $codec )"
+        }
     }
 
 }
